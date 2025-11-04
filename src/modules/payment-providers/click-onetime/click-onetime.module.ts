@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ConfigModule } from '@nestjs/config';
 import { ClickOnetimeController } from './click-onetime.controller';
 import { ClickOnetimeService } from './click-onetime.service';
+import { BotModule } from '../../bot/bot.module';
 import {
     UserEntity,
     PlanEntity,
@@ -13,6 +14,7 @@ import {
 @Module({
     imports: [
         ConfigModule,
+        BotModule,
         TypeOrmModule.forFeature([
             UserEntity,
             PlanEntity,

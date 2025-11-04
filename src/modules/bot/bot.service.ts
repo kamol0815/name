@@ -331,7 +331,9 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
       const user = await this.userRepository.findOne({
         where: { telegramId }
       });
-      const hasPaid = user && (user.isActive || user.subscriptionEnd);
+
+      // Foydalanuvchi VIP ekanligini tekshirish
+      const hasPaid = user && user.isActive && user.subscriptionEnd && new Date(user.subscriptionEnd) > new Date();
 
       if (!hasPaid) {
         // User hasn't paid - show payment button
@@ -424,10 +426,10 @@ export class BotService implements OnModuleInit, OnModuleDestroy {
         where: { telegramId }
       });
 
-      // Check if user already paid
-      if (user && (user.isActive || user.subscriptionEnd)) {
+      // Check if user already paid (VIP)
+      if (user && user.isActive && user.subscriptionEnd && new Date(user.subscriptionEnd) > new Date()) {
         await ctx.answerCallbackQuery({
-          text: '✅ Siz allaqachon to\'lov qilgansiz! Botdan umrbod bepul foydalanishingiz mumkin.',
+          text: '✅ Siz allaqachon VIP foydalanuvchisiz! Botdan umrbod bepul foydalanishingiz mumkin.',
           show_alert: true,
         } as any);
         return;

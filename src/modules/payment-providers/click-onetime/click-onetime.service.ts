@@ -14,6 +14,7 @@ import {
     SubscriptionStatus,
     PaymentType,
 } from 'src/shared/database/entities';
+import { BotService } from '../../bot/bot.service';
 
 /**
  * Professional Click One-time Payment Service
@@ -42,6 +43,7 @@ export class ClickOnetimeService {
         private readonly subscriptionRepository: Repository<UserSubscriptionEntity>,
         private readonly configService: ConfigService,
         private readonly dataSource: DataSource,
+        private readonly botService: BotService,
     ) {
         // Validate required environment variables
         this.clickServiceId = this.configService.get<string>('CLICK_SERVICE_ID');
@@ -357,8 +359,25 @@ export class ClickOnetimeService {
             this.logger.log(`💰 Amount: ${transaction.amount} UZS, Plan: ${plan.name}`);
             this.logger.log(`🎉 User ${user.id} activated with lifetime access until ${endDate.toISOString()}`);
 
-            // TODO: Send notification to user via bot
-            // await this.botService.notifyPaymentSuccess(user.telegramId, transaction.amount, plan.name);
+            // Bot orqali foydalanuvchiga xabar berish
+            try {
+                const bot = this.botService.getBot();
+                await bot.api.sendMessage(
+                    user.telegramId,
+                    `🎉 <b>Tabriklaymiz!</b>\n\n` +
+                    `✅ To'lov muvaffaqiyatli amalga oshirildi!\n` +
+                    `💰 Summa: ${transaction.amount} so'm\n` +
+                    `📦 Reja: ${plan.name}\n\n` +
+                    `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
+                    `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
+                    `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+                    {
+                        parse_mode: 'HTML'
+                    }
+                );
+            } catch (notificationError) {
+                this.logger.error('Failed to send payment success notification:', notificationError);
+            }
 
             return {
                 click_trans_id,

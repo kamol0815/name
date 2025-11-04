@@ -369,13 +369,44 @@ export class ClickService {
       { status: TransactionStatus.PAID },
     );
 
-    // TODO: Add notification logic here or handle in a separate service
-    if (transaction) {
-      logger.info('Payment completed successfully', {
+    // Foydalanuvchini VIP qilish (umrbod obuna)
+    if (transaction && transaction.userId && plan) {
+      const subscriptionEndDate = new Date();
+      subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 100); // 100 yil (umrbod)
+
+      await this.userRepository.update(
+        { id: transaction.userId },
+        {
+          isActive: true,
+          subscriptionEnd: subscriptionEndDate
+        }
+      );
+
+      logger.info('✅ User activated with lifetime subscription', {
         userId: transaction.userId,
         transId: transaction.transId,
         amount: transaction.amount,
+        subscriptionEnd: subscriptionEndDate,
       });
+
+      // Bot orqali foydalanuvchiga xabar berish
+      try {
+        const bot = this.botService.getBot();
+        await bot.api.sendMessage(
+          user.telegramId,
+          `🎉 <b>Tabriklaymiz!</b>\n\n` +
+          `✅ To'lov muvaffaqiyatli amalga oshirildi!\n` +
+          `💰 Summa: ${plan.price} so'm\n\n` +
+          `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
+          `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
+          `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+          {
+            parse_mode: 'HTML'
+          }
+        );
+      } catch (notificationError) {
+        logger.error('Failed to send payment success notification:', notificationError);
+      }
     }
 
     return {

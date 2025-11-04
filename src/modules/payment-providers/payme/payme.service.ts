@@ -551,18 +551,47 @@ export class PaymeService {
     }
 
     try {
-      if (user) {
+      if (user && plan) {
+        // Foydalanuvchini VIP qilish (umrbod obuna)
+        const subscriptionEndDate = new Date();
+        subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 100); // 100 yil (umrbod)
+
         await this.userRepository.update(
           { id: user.id },
-          { subscriptionType: 'onetime' as any },
+          {
+            subscriptionType: 'onetime' as any,
+            isActive: true,
+            subscriptionEnd: subscriptionEndDate
+          },
         );
 
-        // TODO: Implement handlePaymentSuccessForPayme in BotService
-        // await this.botService.handlePaymentSuccessForPayme(
-        //   transaction.userId.toString(),
-        //   user.telegramId,
-        //   user.username,
-        // );
+        logger.info('✅ User activated with lifetime subscription via Payme', {
+          userId: user.id,
+          telegramId: user.telegramId,
+          transId: performTransactionDto.params.id,
+          amount: transaction.amount,
+          subscriptionEnd: subscriptionEndDate,
+        });
+
+        // Bot orqali foydalanuvchiga xabar berish
+        try {
+          const bot = this.botService.getBot();
+          await bot.api.sendMessage(
+            user.telegramId,
+            `🎉 <b>Tabriklaymiz!</b>\n\n` +
+            `✅ Payme orqali to'lov muvaffaqiyatli amalga oshirildi!\n` +
+            `💰 Summa: ${transaction.amount / 100} so'm\n` +
+            `📦 Reja: ${plan.name}\n\n` +
+            `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
+            `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
+            `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+            {
+              parse_mode: 'HTML'
+            }
+          );
+        } catch (notificationError) {
+          logger.error('Failed to send Payme payment success notification:', notificationError);
+        }
       }
     } catch (error) {
       logger.error('Error handling payment success:', error);

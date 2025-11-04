@@ -224,20 +224,25 @@ export class UzcardOnetimeApiService {
 
       logger.info(`Card details: ${JSON.stringify(cardDetails)}`);
 
+      // Foydalanuvchini VIP qilish (umrbod obuna)
+      const subscriptionEndDate = new Date();
+      subscriptionEndDate.setFullYear(subscriptionEndDate.getFullYear() + 100); // 100 yil (umrbod)
+
       await this.userRepository.update(
         { id: user.id },
-        { subscriptionType: 'onetime' as any },
+        {
+          subscriptionType: 'onetime' as any,
+          isActive: true,
+          subscriptionEnd: subscriptionEndDate
+        },
       );
-
-      const endDate = new Date();
-      endDate.setDate(endDate.getDate() + (plan?.duration || 30)); // plan.duration kun qo'shish
 
       const newSubscription = this.userSubscriptionRepository.create({
         userId: transaction.userId,
         planId: transaction.planId,
         subscriptionType: SubscriptionType.ONETIME,
         startDate: new Date(),
-        endDate: endDate,
+        endDate: subscriptionEndDate, // umrbod obuna
         isActive: true,
         autoRenew: false,
         status: SubscriptionStatus.ACTIVE,
@@ -247,14 +252,34 @@ export class UzcardOnetimeApiService {
 
       await this.userSubscriptionRepository.save(newSubscription);
 
-      if (user) {
-        // TODO: Implement handlePaymentSuccessForUzcard in BotService
-        // await this.botService.handlePaymentSuccessForUzcard(
-        //   transaction.userId.toString(),
-        //   user.telegramId,
-        //   user.username,
-        //   dto.selectedService,
-        // );
+      logger.info('✅ User activated with lifetime subscription via UzCard', {
+        userId: user.id,
+        telegramId: user.telegramId,
+        transId: transaction.transId,
+        amount: cardDetails.amount,
+        subscriptionEnd: subscriptionEndDate,
+      });
+
+      if (user && plan) {
+        // Bot orqali foydalanuvchiga xabar berish
+        try {
+          const bot = this.botService.getBot();
+          await bot.api.sendMessage(
+            user.telegramId,
+            `🎉 <b>Tabriklaymiz!</b>\n\n` +
+            `✅ UzCard orqali to'lov muvaffaqiyatli amalga oshirildi!\n` +
+            `💰 Summa: ${cardDetails.amount} so'm\n` +
+            `📦 Reja: ${plan.name}\n\n` +
+            `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
+            `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
+            `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+            {
+              parse_mode: 'HTML'
+            }
+          );
+        } catch (notificationError) {
+          logger.error('Failed to send UzCard payment success notification:', notificationError);
+        }
       }
 
       return {
