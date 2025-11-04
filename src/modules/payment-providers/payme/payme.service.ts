@@ -160,21 +160,27 @@ export class PaymeService {
         return {
           error: PaymeError.AlreadyDone,
         };
-      }
+      }      // Payme amount handling - string yoki number bo'lishi mumkin
+      let requestAmount: number;
+      const originalAmount = checkPerformTransactionDto.params.amount;
 
-      // Payme amount ni to'g'ri number ga aylantirish
-      const requestAmount = parseFloat(checkPerformTransactionDto.params.amount.toString());
+      if (typeof originalAmount === 'string') {
+        // Agar string kelsa va som formatida bo'lsa (5555.00), uni tiynlarga aylantiramiz
+        const amountFloat = parseFloat(originalAmount);
+        requestAmount = Math.round(amountFloat * 100); // 5555.00 → 555500
+      } else {
+        requestAmount = Number(originalAmount); // 555500
+      }
 
       logger.info('💰 Payme amount validation (checkPerformTransaction)', {
         planPrice: plan.price,
         planPriceType: typeof plan.price,
-        requestAmountOriginal: checkPerformTransactionDto.params.amount,
-        requestAmountAsNumber: requestAmount,
+        requestAmountOriginal: originalAmount,
+        requestAmountConverted: requestAmount,
         requestAmountInSom: requestAmount / 100,
       });
 
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
-      // Agar string kelsa, uni number ga aylantiramiz
       const amountInSom = requestAmount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
 
@@ -293,21 +299,27 @@ export class PaymeService {
           error: PaymeError.AlreadyDone,
           id: transId,
         };
+      }      // Payme amount handling - string yoki number bo'lishi mumkin
+      let requestAmount: number;
+      const originalAmount = createTransactionDto.params.amount;
+
+      if (typeof originalAmount === 'string') {
+        // Agar string kelsa va som formatida bo'lsa (5555.00), uni tiynlarga aylantiramiz
+        const amountFloat = parseFloat(originalAmount);
+        requestAmount = Math.round(amountFloat * 100); // 5555.00 → 555500
+      } else {
+        requestAmount = Number(originalAmount); // 555500
       }
 
-      // Payme amount ni to'g'ri number ga aylantirish
-      const requestAmount = parseFloat(createTransactionDto.params.amount.toString());
-
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
-      // Plan narxi decimal sifatida saqlangan ("5555.00"), parseFloat qilamiz
       const amountInSom = requestAmount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
 
       logger.info('💰 Payme amount validation (createTransaction)', {
         planPrice: plan.price,
         planPriceAsNumber,
-        requestAmountOriginal: createTransactionDto.params.amount,
-        requestAmountAsNumber: requestAmount,
+        requestAmountOriginal: originalAmount,
+        requestAmountConverted: requestAmount,
         amountInSom,
         isValid: amountInSom === planPriceAsNumber
       });
