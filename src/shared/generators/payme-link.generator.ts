@@ -13,10 +13,20 @@ const PAYME_CHECKOUT_URL = 'https://checkout.paycom.uz';
 
 export function buildPaymeProviderUrl(params: PaymeLinkGeneratorParams): string {
   const merchantId = config.PAYME_MERCHANT_ID;
-  const amountInTiyns = params.amount * 100;
-  const returnUrl = 'https://t.me/Yulduz_bashorati_bot';
+  const amountAsNumber = parseFloat(params.amount.toString());
+  const amountInTiyns = Math.round(amountAsNumber * 100);
+  const returnUrl = 'https://t.me/gbclilBot';
+
+  logger.info('🔗 Payme link generation', {
+    originalAmount: params.amount,
+    amountAsNumber,
+    amountInTiyns,
+    planId: params.planId,
+    userId: params.userId
+  });
+
   const paramsInString = `m=${merchantId};ac.plan_id=${params.planId};ac.user_id=${params.userId};ac.selected_service=${params.planId};a=${amountInTiyns};c=${encodeURIComponent(returnUrl)}`;
-  logger.info(paramsInString);
+  logger.info('📋 Payme params string:', paramsInString);
   const encodedParams = base64Encode(paramsInString);
   return `${PAYME_CHECKOUT_URL}/${encodedParams}`;
 }

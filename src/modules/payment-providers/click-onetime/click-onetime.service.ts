@@ -370,9 +370,20 @@ export class ClickOnetimeService {
                     `📦 Reja: ${plan.name}\n\n` +
                     `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
                     `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
-                    `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+                    `Botdan bemalol foydalanishingiz mumkin! 🚀\n\n` +
+                    `🔮 Endi asosiy botga o'ting: @gbclilBot`,
                     {
-                        parse_mode: 'HTML'
+                        parse_mode: 'HTML',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    {
+                                        text: '🔮 Asosiy botga o\'tish',
+                                        url: 'https://t.me/gbclilBot'
+                                    }
+                                ]
+                            ]
+                        }
                     }
                 );
             } catch (notificationError) {

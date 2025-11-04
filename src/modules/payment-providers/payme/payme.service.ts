@@ -162,16 +162,20 @@ export class PaymeService {
         };
       }
 
+      // Payme amount ni to'g'ri number ga aylantirish
+      const requestAmount = parseFloat(checkPerformTransactionDto.params.amount.toString());
+
       logger.info('💰 Payme amount validation (checkPerformTransaction)', {
         planPrice: plan.price,
         planPriceType: typeof plan.price,
-        requestAmountInTiyns: checkPerformTransactionDto.params.amount,
-        requestAmountInSom: checkPerformTransactionDto.params.amount / 100,
+        requestAmountOriginal: checkPerformTransactionDto.params.amount,
+        requestAmountAsNumber: requestAmount,
+        requestAmountInSom: requestAmount / 100,
       });
 
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
-      // Plan narxi decimal sifatida saqlangan ("5555.00"), parseFloat qilamiz
-      const amountInSom = checkPerformTransactionDto.params.amount / 100;
+      // Agar string kelsa, uni number ga aylantiramiz
+      const amountInSom = requestAmount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
 
       logger.info('🔍 Payme amount comparison', {
@@ -291,16 +295,20 @@ export class PaymeService {
         };
       }
 
+      // Payme amount ni to'g'ri number ga aylantirish
+      const requestAmount = parseFloat(createTransactionDto.params.amount.toString());
+
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
       // Plan narxi decimal sifatida saqlangan ("5555.00"), parseFloat qilamiz
-      const amountInSom = createTransactionDto.params.amount / 100;
+      const amountInSom = requestAmount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
 
       logger.info('💰 Payme amount validation (createTransaction)', {
         planPrice: plan.price,
         planPriceAsNumber,
+        requestAmountOriginal: createTransactionDto.params.amount,
+        requestAmountAsNumber: requestAmount,
         amountInSom,
-        receivedAmountInTiyns: createTransactionDto.params.amount,
         isValid: amountInSom === planPriceAsNumber
       });
 
@@ -609,9 +617,20 @@ export class PaymeService {
             `📦 Reja: ${plan.name}\n\n` +
             `🌟 <b>Endi siz VIP foydalanuvchisiz!</b>\n` +
             `♾️ Barcha ismlar manosi umrbod ochiq!\n\n` +
-            `Botdan bemalol foydalanishingiz mumkin! 🚀`,
+            `Botdan bemalol foydalanishingiz mumkin! 🚀\n\n` +
+            `🔮 Endi asosiy botga o'ting: @gbclilBot`,
             {
-              parse_mode: 'HTML'
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    {
+                      text: '🔮 Asosiy botga o\'tish',
+                      url: 'https://t.me/gbclilBot'
+                    }
+                  ]
+                ]
+              }
             }
           );
         } catch (notificationError) {
