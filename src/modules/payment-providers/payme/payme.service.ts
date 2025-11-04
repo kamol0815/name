@@ -162,16 +162,24 @@ export class PaymeService {
         };
       }
 
-      logger.info('💰 Checking amount', {
+      logger.info('💰 Payme amount validation (checkPerformTransaction)', {
         planPrice: plan.price,
-        requestAmount: checkPerformTransactionDto.params.amount,
+        planPriceType: typeof plan.price,
+        requestAmountInTiyns: checkPerformTransactionDto.params.amount,
         requestAmountInSom: checkPerformTransactionDto.params.amount / 100,
       });
 
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
-      // Plan narxi string yoki number bo'lishi mumkin, parseFloat qilamiz
+      // Plan narxi decimal sifatida saqlangan ("5555.00"), parseFloat qilamiz
       const amountInSom = checkPerformTransactionDto.params.amount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
+
+      logger.info('🔍 Payme amount comparison', {
+        amountInSom,
+        planPriceAsNumber,
+        isEqual: amountInSom === planPriceAsNumber
+      });
+
       if (amountInSom !== planPriceAsNumber) {
         logger.warn('❌ Invalid amount in Payme checkPerformTransaction', {
           expectedPlanPrice: plan.price,
@@ -183,6 +191,8 @@ export class PaymeService {
           error: PaymeError.InvalidAmount,
         };
       }
+
+      logger.info('✅ Payme amount validation passed');
 
       logger.info('✅ Transaction allowed');
       return {
@@ -282,9 +292,18 @@ export class PaymeService {
       }
 
       // Payme da summa tiynlarda keladi (555500 = 5555.00 som)
-      // Plan narxi string yoki number bo'lishi mumkin, parseFloat qilamiz
+      // Plan narxi decimal sifatida saqlangan ("5555.00"), parseFloat qilamiz
       const amountInSom = createTransactionDto.params.amount / 100;
       const planPriceAsNumber = parseFloat(plan.price.toString());
+
+      logger.info('💰 Payme amount validation (createTransaction)', {
+        planPrice: plan.price,
+        planPriceAsNumber,
+        amountInSom,
+        receivedAmountInTiyns: createTransactionDto.params.amount,
+        isValid: amountInSom === planPriceAsNumber
+      });
+
       if (amountInSom !== planPriceAsNumber) {
         logger.warn('❌ Invalid amount in Payme createTransaction', {
           expectedPlanPrice: plan.price,
@@ -297,6 +316,8 @@ export class PaymeService {
           id: transId,
         };
       }
+
+      logger.info('✅ Payme createTransaction amount validation passed');
 
       const existingTransaction = await this.transactionRepository.findOne({
         where: {
