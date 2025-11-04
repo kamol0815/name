@@ -1,33 +1,34 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not } from 'typeorm';
 import { CreateCardTokenPaymeDto } from './dto/create-card-dto';
 import { VerifyCardTokenPaymeDtoDto } from './dto/verify-card-dto';
 import { BotService } from 'src/modules/bot/bot.service';
 import logger from 'src/shared/utils/logger';
 import axios from 'axios';
-import mongoose from 'mongoose';
 import { CardCreateRequest, CardGetVerifyCodeRequest, CardRemoveRequest, CardVerifyRequest, ReceiptCreateRequest, ReceiptPayRequest } from 'src/shared/utils/types/interfaces/payme-types';
-import { UserModel } from 'src/shared/database/models/user.model';
-import { CardType, UserCardsModel } from 'src/shared/database/models/user-cards.model';
-import { Plan } from 'src/shared/database/models/plans.model';
-import { UserSubscription } from 'src/shared/database/models/user-subscription.model';
-import { PaymentProvider, PaymentTypes, Transaction, TransactionStatus } from 'src/shared/database/models/transactions.model';
+import { UserEntity, PlanEntity, TransactionEntity, UserCardEntity, UserSubscriptionEntity } from 'src/shared/database/entities';
+import { PaymentProvider, TransactionStatus, CardType, SubscriptionType, SubscriptionStatus } from 'src/shared/database/entities/enums';
 
 @Injectable()
 export class PaymeSubsApiService {
 
-    private botService: BotService;
     private readonly baseUrl = 'https://checkout.paycom.uz/api';
-
-
     private readonly PAYME_X_AUTH_CARDS = process.env.PAYME_SUBS_API_ID;
     private readonly PAYME_X_AUTH_RECEIPTS = `${process.env.PAYME_SUBS_API_ID}:${process.env.PAYME_SUBS_API_KEY}`;
 
-    getBotService(): BotService {
-        if (!this.botService) {
-            this.botService = new BotService();
-        }
-        return this.botService;
-    }
+    constructor(
+        @InjectRepository(UserEntity)
+        private readonly userRepository: Repository<UserEntity>,
+        @InjectRepository(PlanEntity)
+        private readonly planRepository: Repository<PlanEntity>,
+        @InjectRepository(TransactionEntity)
+        private readonly transactionRepository: Repository<TransactionEntity>,
+        @InjectRepository(UserCardEntity)
+        private readonly userCardRepository: Repository<UserCardEntity>,
+        @InjectRepository(UserSubscriptionEntity)
+        private readonly userSubscriptionRepository: Repository<UserSubscriptionEntity>,
+    ) { }
 
     async createCardToken(requestBody: CreateCardTokenPaymeDto) {
         // Create headers
@@ -171,8 +172,8 @@ export class PaymeSubsApiService {
                 };
             }
 
-            const user = await UserModel.findOne({
-                _id: requestBody.userId,
+            const user = await this.userRepository.findOne({
+                where: { id: requestBody.userId },
             });
             if (!user) {
                 logger.error(`User not found for ID: ${requestBody.userId}`);
@@ -186,8 +187,8 @@ export class PaymeSubsApiService {
             }
             logger.info(`User found: ${user}`);
 
-            const existingUserCard = await UserCardsModel.findOne({
-                incompleteCardNumber: response.data.result.card.number,
+            const existingUserCard = await this.userCardRepository.findOne({
+                where: { incompleteCardNumber: response.data.result.card.number },
             });
 
             if (existingUserCard && !existingUserCard.isDeleted) {
@@ -206,9 +207,11 @@ export class PaymeSubsApiService {
                 logger.info(`Creating/updating user card for user ID: ${requestBody.userId}, with card token: ${requestBody.token}`);
 
                 // Check if user already has a PAYME card
-                const existingCard = await UserCardsModel.findOne({
-                    telegramId: user.telegramId,
-                    cardType: CardType.PAYME
+                const existingCard = await this.userCardRepository.findOne({
+                    where: {
+                        telegramId: user.telegramId,
+                        cardType: CardType.PAYME
+                    }
                 });
 
                 let userCard;
@@ -218,13 +221,13 @@ export class PaymeSubsApiService {
                     existingCard.incompleteCardNumber = response.data.result.card.number;
                     existingCard.cardToken = response.data.result.card.token;
                     existingCard.expireDate = response.data.result.card.expire;
-                    existingCard.planId = requestBody.planId as any;
+                    existingCard.planId = requestBody.planId;
                     existingCard.verificationCode = parseInt(requestBody.code);
                     existingCard.verified = true;
                     existingCard.verifiedDate = new Date(time);
                     existingCard.isDeleted = false;
-                    existingCard.deletedAt = undefined;
-                    userCard = await existingCard.save();
+                    existingCard.deletedAt = null;
+                    userCard = await this.userCardRepository.save(existingCard);
                 } else if (existingUserCard && existingUserCard.isDeleted) {
                     logger.info(`Reviving deleted PAYME card for user: ${user.telegramId}`);
                     existingUserCard.telegramId = user.telegramId;
@@ -232,17 +235,17 @@ export class PaymeSubsApiService {
                     existingUserCard.cardToken = response.data.result.card.token;
                     existingUserCard.expireDate = response.data.result.card.expire;
                     existingUserCard.userId = requestBody.userId;
-                    existingUserCard.planId = requestBody.planId as any;
-                    existingUserCard.verificationCode = requestBody.code;
+                    existingUserCard.planId = requestBody.planId;
+                    existingUserCard.verificationCode = parseInt(requestBody.code);
                     existingUserCard.verified = true;
                     existingUserCard.verifiedDate = new Date(time);
                     existingUserCard.isDeleted = false;
-                    existingUserCard.deletedAt = undefined;
-                    userCard = await existingUserCard.save();
+                    existingUserCard.deletedAt = null;
+                    userCard = await this.userCardRepository.save(existingUserCard);
                 } else {
                     // Create new card
                     logger.info(`Creating new PAYME card for user: ${user.telegramId}`);
-                    userCard = await UserCardsModel.create({
+                    const newCard = this.userCardRepository.create({
                         telegramId: user.telegramId,
                         username: user.username ? user.username : undefined,
                         incompleteCardNumber: response.data.result.card.number,
@@ -250,17 +253,18 @@ export class PaymeSubsApiService {
                         expireDate: response.data.result.card.expire,
                         userId: requestBody.userId,
                         planId: requestBody.planId,
-                        verificationCode: requestBody.code,
+                        verificationCode: parseInt(requestBody.code),
                         verified: true,
                         verifiedDate: new Date(time),
                         cardType: CardType.PAYME
                     });
+                    userCard = await this.userCardRepository.save(newCard);
                 }
 
-                user.subscriptionType = 'subscription';
-                await user.save();
+                // No need to update subscriptionType
+                // await this.userRepository.save(user);
 
-                const plan = await Plan.findById(requestBody.planId);
+                const plan = await this.planRepository.findOne({ where: { id: requestBody.planId } });
                 if (!plan) {
                     logger.error(`Plan not found for ID: ${requestBody.planId}`);
                     throw new Error('Plan not found');
@@ -282,26 +286,23 @@ export class PaymeSubsApiService {
                     const duration = Number(plan.duration) || 30;
                     endDate.setDate(endDate.getDate() + duration);
 
-                    await UserSubscription.create({
-                        user: requestBody.userId,
-                        plan: requestBody.planId,
-                        subscriptionType: 'subscription',
+                    const newSubscription = this.userSubscriptionRepository.create({
+                        userId: requestBody.userId,
+                        planId: requestBody.planId,
+                        subscriptionType: SubscriptionType.SUBSCRIPTION,
                         startDate: now,
                         endDate,
                         isActive: true,
                         autoRenew: true,
-                        status: 'active',
+                        status: SubscriptionStatus.ACTIVE,
                         paidAmount: 0,
                         isTrial: true,
                     });
+                    await this.userSubscriptionRepository.save(newSubscription);
 
                     if (requestBody.selectedService === 'yulduz') {
-                        await this.getBotService().handleAutoSubscriptionSuccess(
-                            requestBody.userId,
-                            user.telegramId,
-                            requestBody.planId,
-                            user.username,
-                        );
+                        // TODO: Handle bot notification
+                        logger.info('Trial subscription activated for PAYME user', { userId: requestBody.userId });
                     }
 
                     return responsePayload;
@@ -309,14 +310,8 @@ export class PaymeSubsApiService {
 
                 if (requestBody.selectedService === 'yulduz') {
                     try {
-                        await this.getBotService().handleCardAddedWithoutBonus(
-                            requestBody.userId,
-                            user.telegramId,
-                            CardType.PAYME,
-                            plan,
-                            user.username,
-                            requestBody.selectedService,
-                        );
+                        // TODO: Handle bot notification for card added without bonus
+                        logger.info('Card added without bonus for PAYME user', { userId: requestBody.userId });
                     } catch (botError) {
                         logger.error(
                             `Failed to trigger paid renewal for PAYME user ${user.telegramId}:`,
@@ -415,31 +410,27 @@ export class PaymeSubsApiService {
             'Cache-Control': 'no-cache'
         };
 
-        const user = await UserModel.findById(userId);
+        const user = await this.userRepository.findOne({ where: { id: userId } });
         if (!user) {
             logger.error('User not found');
             return;
         }
 
-        const plan = await Plan.findById(planId);
+        const plan = await this.planRepository.findOne({ where: { id: planId } });
         if (!plan) {
             logger.error('Plan not found');
             return;
         }
 
-        const cardConditions = [{ userId }];
-        if (user.telegramId) {
-            cardConditions.push({ telegramId: user.telegramId });
-        }
-
-        const userCard = await UserCardsModel.findOne({
-            cardType: CardType.PAYME,
-            isDeleted: { $ne: true },
-            verified: true,
-            $or: cardConditions,
-        })
-            .sort({ verifiedDate: -1 })
-            .exec();
+        const userCard = await this.userCardRepository.findOne({
+            where: {
+                userId,
+                cardType: CardType.PAYME,
+                isDeleted: Not(true),
+                verified: true,
+            },
+            order: { verifiedDate: 'DESC' },
+        });
         if (!userCard) {
             logger.error('User card not found for Payme auto payment', {
                 userId,
@@ -493,39 +484,31 @@ export class PaymeSubsApiService {
             const customRandomId = `subscription-payme-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 
-            const transaction = await Transaction.create(
-                {
-                    provider: PaymentProvider.PAYME,
-                    paymentType: PaymentTypes.SUBSCRIPTION,
-                    transId: receiptId ? receiptId : customRandomId,
-                    amount: '5555',
-                    status: TransactionStatus.PAID,
-                    userId: userId,
-                    planId: planId,
-                }
-            )
-
-            user.subscriptionType = 'subscription'
-            await user.save();
+            const transaction = this.transactionRepository.create({
+                provider: PaymentProvider.PAYME,
+                transId: receiptId ? receiptId : customRandomId,
+                amount: 5555,
+                status: TransactionStatus.PAID,
+                userId: userId,
+                planId: planId,
+            });
+            await this.transactionRepository.save(transaction);
 
             const endDate = new Date();
             endDate.setDate(endDate.getDate() + 30);
 
-            await UserSubscription.create({
-                user: userId,
-                plan: planId,
-                telegramId: user.telegramId,
-                planName: plan.name,
-                subscriptionType: 'subscription',
+            const newSubscription = this.userSubscriptionRepository.create({
+                userId: userId,
+                planId: planId,
+                subscriptionType: SubscriptionType.SUBSCRIPTION,
                 startDate: new Date(),
                 endDate: endDate,
                 isActive: true,
                 autoRenew: true,
-                status: 'active',
-                paidBy: CardType.PAYME,
-                subscribedBy: CardType.PAYME,
-                hasReceivedFreeBonus: true
+                status: SubscriptionStatus.ACTIVE,
+                paidAmount: plan.price,
             });
+            await this.userSubscriptionRepository.save(newSubscription);
             logger.info(`UserSubscription created for user ID: ${userId}, telegram ID: ${user.telegramId}, plan ID: ${planId} in payme-subs-api`);
 
 
@@ -545,7 +528,7 @@ export class PaymeSubsApiService {
             };
         }
     }
-  async createReceipt(userId: string, planId: string) {
+    async createReceipt(userId: string, planId: string) {
 
         let receiptId = null;
         const headers = {
@@ -557,7 +540,7 @@ export class PaymeSubsApiService {
 
         logger.warn(`LOOOOOOK, planId in createReceipt: ${planId}`);
 
-        const plan = await Plan.findById(planId);
+        const plan = await this.planRepository.findOne({ where: { id: planId } });
         if (!plan) {
             logger.error('No plan found');
             return;
@@ -602,52 +585,52 @@ export class PaymeSubsApiService {
                     message: 'Error connecting to payment service'
                 }
             };
+        }
     }
-  }
 
-  async removeCard(cardToken: string): Promise<boolean> {
-    const headers = {
-      Accept: 'application/json',
-      'Content-Type': 'application/json',
-      'X-Auth': this.PAYME_X_AUTH_CARDS,
-      'Cache-Control': 'no-cache',
-    };
+    async removeCard(cardToken: string): Promise<boolean> {
+        const headers = {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'X-Auth': this.PAYME_X_AUTH_CARDS,
+            'Cache-Control': 'no-cache',
+        };
 
-    const payload: CardRemoveRequest = {
-      id: Date.now(),
-      method: 'cards.remove',
-      params: {
-        token: cardToken,
-      },
-    };
+        const payload: CardRemoveRequest = {
+            id: Date.now(),
+            method: 'cards.remove',
+            params: {
+                token: cardToken,
+            },
+        };
 
-    try {
-      const response = await axios.post(this.baseUrl, payload, { headers });
+        try {
+            const response = await axios.post(this.baseUrl, payload, { headers });
 
-      if (response.data?.error) {
-        logger.error(
-          `Failed to remove Payme card. Code: ${response.data.error.code}, Message: ${response.data.error.message}`,
-        );
-        return false;
-      }
+            if (response.data?.error) {
+                logger.error(
+                    `Failed to remove Payme card. Code: ${response.data.error.code}, Message: ${response.data.error.message}`,
+                );
+                return false;
+            }
 
-      const result = response.data?.result;
-      if (result?.success === true) {
-        return true;
-      }
+            const result = response.data?.result;
+            if (result?.success === true) {
+                return true;
+            }
 
-      logger.warn(
-        `Payme card removal returned unexpected payload: ${JSON.stringify(response.data)}`,
-      );
-      return false;
-    } catch (error) {
-      logger.error('Error removing Payme card:', error);
-      return false;
+            logger.warn(
+                `Payme card removal returned unexpected payload: ${JSON.stringify(response.data)}`,
+            );
+            return false;
+        } catch (error) {
+            logger.error('Error removing Payme card:', error);
+            return false;
+        }
     }
-  }
 
 
-  private getErrorMessage(errorCode: number): string {
+    private getErrorMessage(errorCode: number): string {
         const errorMessages = {
             '-31300': `Karta raqami noto'g'ri. Iltimos tekshirib qaytadan kiriting.`,
             '-31301': `Amal qilish muddati noto'g'ri. Iltimos tekshirib qaytadan kiriting.`,

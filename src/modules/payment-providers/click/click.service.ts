@@ -1,16 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not } from 'typeorm';
 import { ClickRequest } from './types/click-request.type';
 import { ClickAction, ClickError } from './enums';
 import logger from '../../../shared/utils/logger';
 import { generateMD5 } from '../../../shared/utils/hashing/hasher.helper';
-import {
-  Transaction,
-  TransactionStatus,
-} from '../../../shared/database/models/transactions.model';
-import { UserModel } from '../../../shared/database/models/user.model';
+import { UserEntity, PlanEntity, TransactionEntity } from '../../../shared/database/entities';
+import { TransactionStatus, PaymentProvider } from '../../../shared/database/entities/enums';
 import { BotService } from '../../bot/bot.service';
-import { Plan } from '../../../shared/database/models/plans.model';
 
 type TransactionContext = {
   planId?: string;
@@ -63,6 +61,12 @@ export class ClickService {
   constructor(
     private readonly configService: ConfigService,
     private readonly botService: BotService,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(TransactionEntity)
+    private readonly transactionRepository: Repository<TransactionEntity>,
   ) {
     const secretKey = this.configService.get<string>('CLICK_SECRET');
     if (!secretKey) {
@@ -91,7 +95,7 @@ export class ClickService {
         };
     }
   }
-   
+
   async prepare(clickReqBody: ClickRequest) {
     logger.info('Preparing transaction', { clickReqBody });
 
@@ -137,7 +141,7 @@ export class ClickService {
       };
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await this.userRepository.findOne({ where: { id: userId } });
 
     if (!user) {
       return {
@@ -154,9 +158,11 @@ export class ClickService {
     }
 
     // Check if the transaction already exists and is not in a PENDING state
-    const existingTransaction = await Transaction.findOne({
-      transId: transId,
-      status: { $ne: TransactionStatus.PENDING },
+    const existingTransaction = await this.transactionRepository.findOne({
+      where: {
+        transId: transId,
+        status: Not(TransactionStatus.PENDING),
+      },
     });
 
     if (existingTransaction) {
@@ -168,17 +174,17 @@ export class ClickService {
 
     // Create a new transaction only if it doesn't exist or is in a PENDING state
     const time = new Date().getTime();
-    await Transaction.create({
-      provider: 'click',
+    const newTransaction = this.transactionRepository.create({
+      provider: PaymentProvider.CLICK,
       planId,
       userId,
-      signTime,
       transId,
       prepareId: time,
       status: TransactionStatus.PENDING,
       amount: clickReqBody.amount,
       createdAt: new Date(time),
     });
+    await this.transactionRepository.save(newTransaction);
 
     return {
       click_trans_id: +transId,
@@ -237,7 +243,7 @@ export class ClickService {
       };
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await this.userRepository.findOne({ where: { id: userId } });
 
     if (!user) {
       return {
@@ -247,7 +253,7 @@ export class ClickService {
     }
 
     if (hasActiveSubscription(user)) {
-      await Transaction.findOneAndUpdate(
+      await this.transactionRepository.update(
         { transId },
         {
           status: TransactionStatus.CANCELED,
@@ -261,7 +267,7 @@ export class ClickService {
       };
     }
 
-    const plan = await Plan.findById(planId);
+    const plan = await this.planRepository.findOne({ where: { id: planId } });
 
     if (!plan) {
       return {
@@ -270,10 +276,12 @@ export class ClickService {
       };
     }
 
-    const isPrepared = await Transaction.findOne({
-      prepareId,
-      userId,
-      planId,
+    const isPrepared = await this.transactionRepository.findOne({
+      where: {
+        prepareId,
+        userId,
+        planId,
+      },
     });
 
     if (!isPrepared) {
@@ -283,10 +291,12 @@ export class ClickService {
       };
     }
 
-    const isAlreadyPaid = await Transaction.findOne({
-      planId,
-      prepareId,
-      status: TransactionStatus.PAID,
+    const isAlreadyPaid = await this.transactionRepository.findOne({
+      where: {
+        planId,
+        prepareId,
+        status: TransactionStatus.PAID,
+      },
     });
 
     if (isAlreadyPaid) {
@@ -303,8 +313,8 @@ export class ClickService {
       };
     }
 
-    const transaction = await Transaction.findOne({
-      transId,
+    const transaction = await this.transactionRepository.findOne({
+      where: { transId },
     });
 
     if (transaction && transaction.status === TransactionStatus.CANCELED) {
@@ -315,7 +325,7 @@ export class ClickService {
     }
 
     if (error > 0) {
-      await Transaction.findOneAndUpdate(
+      await this.transactionRepository.update(
         { transId: transId },
         { status: TransactionStatus.FAILED },
       );
@@ -325,24 +335,18 @@ export class ClickService {
       };
     }
 
-    await Transaction.findOneAndUpdate(
+    await this.transactionRepository.update(
       { transId: transId },
       { status: TransactionStatus.PAID },
     );
+
+    // TODO: Add notification logic here or handle in a separate service
     if (transaction) {
-      try {
-        const user = await UserModel.findById(transaction.userId).exec();
-        if (user) {
-          await this.botService.handlePaymentSuccess(
-            transaction.userId.toString(),
-            user.telegramId,
-            user.username,
-          );
-        }
-      } catch (error) {
-        logger.error('Error handling payment success:', error);
-        // Continue with the response even if notification fails
-      }
+      logger.info('Payment completed successfully', {
+        userId: transaction.userId,
+        transId: transaction.transId,
+        amount: transaction.amount,
+      });
     }
 
     return {

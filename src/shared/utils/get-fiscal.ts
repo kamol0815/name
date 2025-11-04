@@ -47,7 +47,7 @@ export async function getFiscal(data: FiscalDto): Promise<FiscalResult> {
         PackageCode: '1500572',
         GoodPrice: 555500,
         Price: 555500,
-        Amount: 1000,
+        Amount: 5555,
         VAT: (555500 / 1.12) * 0.12,
         VATPercent: 12,
         Discount: 0,

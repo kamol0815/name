@@ -1,8 +1,9 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not } from 'typeorm';
 import { CancelSubscriptionDto } from './dto/cancel-subscription.dto';
-import { CardType, IUserCardsDocument, UserCardsModel } from 'src/shared/database/models/user-cards.model';
-import { UserModel } from 'src/shared/database/models/user.model';
-import { UserSubscription } from 'src/shared/database/models/user-subscription.model';
+import { UserEntity, UserCardEntity, UserSubscriptionEntity } from 'src/shared/database/entities';
+import { CardType, SubscriptionStatus } from 'src/shared/database/entities/enums';
 import logger from 'src/shared/utils/logger';
 import { PaymeSubsApiService } from '../payment-providers/payme-subs-api/payme-subs-api.service';
 import { ClickSubsApiService } from '../payment-providers/click-subs-api/click-subs-api.service';
@@ -12,52 +13,60 @@ import { buildSubscriptionManagementLink, buildSubscriptionCancellationLink } fr
 @Injectable()
 export class SubscriptionManagementService {
   constructor(
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(UserCardEntity)
+    private readonly userCardRepository: Repository<UserCardEntity>,
+    @InjectRepository(UserSubscriptionEntity)
+    private readonly userSubscriptionRepository: Repository<UserSubscriptionEntity>,
     private readonly paymeSubsApiService: PaymeSubsApiService,
     private readonly clickSubsApiService: ClickSubsApiService,
     private readonly uzcardOnetimeApiService: UzcardOnetimeApiService,
-  ) {}
+  ) { }
 
   async cancelSubscription(dto: CancelSubscriptionDto) {
     const telegramId = this.parseTelegramId(dto.telegramId);
 
-    const user = await UserModel.findOne({ telegramId });
+    const user = await this.userRepository.findOne({ where: { telegramId } });
     if (!user) {
       throw new NotFoundException(
         'Foydalanuvchi topilmadi. Telegram ID raqamini tekshiring.',
       );
     }
 
-    const cards = await UserCardsModel.find({
-      userId: user._id,
-      isDeleted: { $ne: true },
-    }).exec();
+    const cards = await this.userCardRepository.find({
+      where: {
+        userId: user.id,
+        isDeleted: Not(true),
+      },
+    });
 
     for (const card of cards) {
       const providerRemoved = await this.removeProviderCard(card);
       if (!providerRemoved) {
         logger.warn(
-          `Provider removal failed for user ${user._id} cardType=${card.cardType}`,
+          `Provider removal failed for user ${user.id} cardType=${card.cardType}`,
         );
       }
 
       card.isDeleted = true;
       card.deletedAt = new Date();
-      await card.save();
+      await this.userCardRepository.save(card);
     }
 
-    await UserSubscription.updateMany(
-      { user: user._id, isActive: true },
+    await this.userSubscriptionRepository.update(
+      { userId: user.id, isActive: true },
       {
         isActive: false,
         autoRenew: false,
-        status: 'cancelled',
+        status: SubscriptionStatus.CANCELLED,
         endDate: new Date(),
       },
     );
 
     user.isActive = false;
     user.subscriptionEnd = new Date();
-    await user.save();
+    await this.userRepository.save(user);
 
     logger.info(`Subscription cancelled for telegramId=${telegramId}`);
 
@@ -89,7 +98,7 @@ export class SubscriptionManagementService {
     return parsed;
   }
 
-  private async removeProviderCard(card: IUserCardsDocument): Promise<boolean> {
+  private async removeProviderCard(card: UserCardEntity): Promise<boolean> {
     switch (card.cardType) {
       case CardType.PAYME:
         return this.paymeSubsApiService.removeCard(card.cardToken);

@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { ExternalAddCardDto } from './dto/request/external-add-card.dto';
 import { AddCardResponseDto } from './dto/response/add-card-response.dto';
 import { ConfirmCardResponseDto } from './dto/response/confirm-card-response.dto';
@@ -7,21 +9,18 @@ import axios from 'axios';
 import { BotService } from '../../bot/bot.service';
 import logger from '../../../shared/utils/logger';
 import {
+  UserEntity,
+  PlanEntity,
+  TransactionEntity,
+  UserCardEntity,
+  UserSubscriptionEntity,
+} from '../../../shared/database/entities';
+import {
   PaymentProvider,
-  PaymentTypes,
-  Transaction,
   TransactionStatus,
-} from '../../../shared/database/models/transactions.model';
-import {
-  IPlanDocument,
-  Plan,
-} from '../../../shared/database/models/plans.model';
-import { UserModel } from '../../../shared/database/models/user.model';
-import {
   CardType,
-  UserCardsModel,
-} from '../../../shared/database/models/user-cards.model';
-import { UserSubscription } from '../../../shared/database/models/user-subscription.model';
+  PaymentType,
+} from '../../../shared/database/entities/enums';
 import { FiscalDto } from './dto/uzcard-payment.dto';
 import { getFiscal } from '../../../shared/utils/get-fiscal';
 import { uzcardAuthHash } from '../../../shared/utils/hashing/uzcard-auth-hash';
@@ -37,16 +36,19 @@ export interface ErrorResponse {
 export class UzCardApiService {
   private baseUrl = process.env.UZCARD_BASE_URL;
 
-
-
-  constructor(private readonly botService: BotService) { }
-
-  // getBotService(): BotService {
-  //       if (!this.botService) {
-  //           this.botService = new BotService();
-  //       }
-  //       return this.botService;
-  //   }
+  constructor(
+    private readonly botService: BotService,
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(TransactionEntity)
+    private readonly transactionRepository: Repository<TransactionEntity>,
+    @InjectRepository(UserCardEntity)
+    private readonly userCardRepository: Repository<UserCardEntity>,
+    @InjectRepository(UserSubscriptionEntity)
+    private readonly userSubscriptionRepository: Repository<UserSubscriptionEntity>,
+  ) { }
 
   async addCard(dto: AddCardDto): Promise<AddCardResponseDto | ErrorResponse> {
     const headers = this.getHeaders();
@@ -101,9 +103,11 @@ export class UzCardApiService {
 
           try {
             // Find and delete existing card from database
-            const existingCard = await UserCardsModel.findOne({
-              userId: dto.userId,
-              cardType: CardType.UZCARD,
+            const existingCard = await this.userCardRepository.findOne({
+              where: {
+                userId: dto.userId,
+                cardType: CardType.UZCARD,
+              },
             });
 
             if (existingCard && existingCard.UzcardIdForDeleteCard) {
@@ -124,7 +128,7 @@ export class UzCardApiService {
               }
 
               // Delete card from our database
-              await UserCardsModel.deleteOne({ _id: existingCard._id });
+              await this.userCardRepository.remove(existingCard);
               logger.info(`Card deleted from database successfully`);
 
               // Wait a moment for Uzcard system to process

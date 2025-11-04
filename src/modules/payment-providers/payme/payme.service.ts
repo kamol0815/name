@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { TransactionMethods } from './constants/transaction-methods';
 import { CheckPerformTransactionDto } from './dto/check-perform-transaction.dto';
 import { RequestBody } from './types/incoming-request-body';
@@ -13,13 +15,8 @@ import { PaymeError } from './constants/payme-error';
 import { CancelingReasons } from './constants/canceling-reasons';
 import logger from '../../../shared/utils/logger';
 import { ValidationHelper } from '../../../shared/utils/validation.helper';
-import { UserModel } from '../../../shared/database/models/user.model';
-import { Plan } from '../../../shared/database/models/plans.model';
-import {
-  PaymentTypes,
-  Transaction,
-  TransactionStatus,
-} from '../../../shared/database/models/transactions.model';
+import { UserEntity, PlanEntity, TransactionEntity } from '../../../shared/database/entities';
+import { PaymentProvider, TransactionStatus, PaymentType } from '../../../shared/database/entities/enums';
 import { ConfigService } from '@nestjs/config';
 import { BotService } from '../../bot/bot.service';
 
@@ -42,6 +39,12 @@ function hasActiveSubscription(user?: {
 @Injectable()
 export class PaymeService {
   constructor(
+    @InjectRepository(UserEntity)
+    private readonly userRepository: Repository<UserEntity>,
+    @InjectRepository(PlanEntity)
+    private readonly planRepository: Repository<PlanEntity>,
+    @InjectRepository(TransactionEntity)
+    private readonly transactionRepository: Repository<TransactionEntity>,
     private readonly configService: ConfigService,
     private readonly botService: BotService,
   ) { }
@@ -78,265 +81,366 @@ export class PaymeService {
   async checkPerformTransaction(
     checkPerformTransactionDto: CheckPerformTransactionDto,
   ) {
-    const planId = checkPerformTransactionDto.params?.account?.plan_id;
-    const userId = checkPerformTransactionDto.params?.account?.user_id;
-    const selectedService =
-      checkPerformTransactionDto.params?.account?.selected_service;
+    try {
+      logger.info('🔵 CheckPerformTransaction called', {
+        params: checkPerformTransactionDto.params,
+      });
 
-    if (selectedService) {
-      logger.info(
-        `Selected service in checkPerformTransaction: ${selectedService}`,
-      );
-    }
+      const planId = checkPerformTransactionDto.params?.account?.plan_id;
+      const userId = checkPerformTransactionDto.params?.account?.user_id;
+      const selectedService =
+        checkPerformTransactionDto.params?.account?.selected_service;
 
-    if (!ValidationHelper.isValidObjectId(planId)) {
-      return {
-        error: {
-          code: ErrorStatusCodes.TransactionNotAllowed,
-          message: {
-            uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
-            en: 'Product/user not found',
-            ru: 'Товар/пользователь не найден',
+      logger.info('🔍 Validating IDs', { planId, userId, selectedService });
+
+      if (selectedService) {
+        logger.info(
+          `Selected service in checkPerformTransaction: ${selectedService}`,
+        );
+      }
+
+      if (!ValidationHelper.isValidObjectId(planId)) {
+        logger.warn('❌ Invalid planId format', { planId });
+        return {
+          error: {
+            code: ErrorStatusCodes.TransactionNotAllowed,
+            message: {
+              uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
+              en: 'Product/user not found',
+              ru: 'Товар/пользователь не найден',
+            },
+            data: null,
           },
-          data: null,
-        },
-      };
-    }
+        };
+      }
 
-    if (!ValidationHelper.isValidObjectId(userId)) {
-      return {
-        error: {
-          code: ErrorStatusCodes.TransactionNotAllowed,
-          message: {
-            uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
-            en: 'Product/user not found',
-            ru: 'Товар/пользователь не найден',
+      if (!ValidationHelper.isValidObjectId(userId)) {
+        logger.warn('❌ Invalid userId format', { userId });
+        return {
+          error: {
+            code: ErrorStatusCodes.TransactionNotAllowed,
+            message: {
+              uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
+              en: 'Product/user not found',
+              ru: 'Товар/пользователь не найден',
+            },
+            data: null,
           },
-          data: null,
-        },
-      };
-    }
+        };
+      }
 
-    const plan = await Plan.findById(planId).exec();
-    const user = await UserModel.findById(userId).exec();
+      logger.info('🔎 Searching for plan and user in database');
+      const plan = await this.planRepository.findOne({ where: { id: planId } });
+      const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (!plan || !user) {
-      return {
-        error: {
-          code: ErrorStatusCodes.TransactionNotAllowed,
-          message: {
-            uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
-            en: 'Product/user not found',
-            ru: 'Товар/пользователь не найден',
+      logger.info('📊 Database query results', {
+        planFound: !!plan,
+        userFound: !!user,
+        planData: plan ? { id: plan.id, name: plan.name, price: plan.price } : null,
+        userData: user ? { id: user.id, telegramId: user.telegramId } : null,
+      });
+
+      if (!plan || !user) {
+        logger.warn('❌ Plan or user not found in database');
+        return {
+          error: {
+            code: ErrorStatusCodes.TransactionNotAllowed,
+            message: {
+              uz: 'Sizda mahsulot/foydalanuvchi topilmadi',
+              en: 'Product/user not found',
+              ru: 'Товар/пользователь не найден',
+            },
+            data: null,
           },
-          data: null,
-        },
-      };
-    }
+        };
+      }
 
-    if (hasActiveSubscription(user)) {
-      return {
-        error: PaymeError.AlreadyDone,
-      };
-    }
+      if (hasActiveSubscription(user)) {
+        logger.info('✅ User already has active subscription');
+        return {
+          error: PaymeError.AlreadyDone,
+        };
+      }
 
-    if (checkPerformTransactionDto.params.amount === plan.price) {
+      logger.info('💰 Checking amount', {
+        planPrice: plan.price,
+        requestAmount: checkPerformTransactionDto.params.amount,
+        requestAmountInSom: checkPerformTransactionDto.params.amount / 100,
+      });
+
+      if (checkPerformTransactionDto.params.amount === plan.price) {
+        logger.info('✅ Amount matches exactly (in tiyns)');
+        return {
+          result: {
+            allow: true,
+          },
+        };
+      }
+      if (plan.price !== checkPerformTransactionDto.params.amount / 100) {
+        logger.warn('❌ Invalid amount', {
+          expected: plan.price,
+          received: checkPerformTransactionDto.params.amount / 100,
+        });
+        return {
+          error: PaymeError.InvalidAmount,
+        };
+      }
+
+      logger.info('✅ Transaction allowed');
       return {
         result: {
           allow: true,
         },
       };
-    }
-    if (plan.price !== checkPerformTransactionDto.params.amount / 100) {
-      console.log("Xato shuyerda bo'lishi mumkin");
+    } catch (error) {
+      logger.error('❌ Error in checkPerformTransaction', {
+        error: error.message,
+        stack: error.stack,
+      });
       return {
-        error: PaymeError.InvalidAmount,
+        error: {
+          code: ErrorStatusCodes.SystemError,
+          message: {
+            uz: 'Tizimda xatolik yuz berdi',
+            en: 'System error occurred',
+            ru: 'Произошла системная ошибка',
+          },
+          data: error.message,
+        },
       };
     }
-    return {
-      result: {
-        allow: true,
-      },
-    };
   }
 
   async createTransaction(createTransactionDto: CreateTransactionDto) {
-    const planId = createTransactionDto.params?.account?.plan_id;
-    const userId = createTransactionDto.params?.account?.user_id;
-    const transId = createTransactionDto.params?.id;
+    try {
+      logger.info('🔵 CreateTransaction called', {
+        params: createTransactionDto.params,
+      });
 
-    const selectedService =
-      createTransactionDto.params?.account?.selected_sport;
+      const planId = createTransactionDto.params?.account?.plan_id;
+      const userId = createTransactionDto.params?.account?.user_id;
+      const transId = createTransactionDto.params?.id;
 
-    if (selectedService) {
-      logger.info(
-        `Selected service in createTransaction: ${selectedService}`,
-      );
-    }
+      const selectedService =
+        createTransactionDto.params?.account?.selected_sport;
 
-    if (!ValidationHelper.isValidObjectId(planId)) {
-      return {
-        error: PaymeError.ProductNotFound,
-        id: transId,
-      };
-    }
+      logger.info('🔍 Transaction details', {
+        planId,
+        userId,
+        transId,
+        selectedService,
+      });
 
-    if (!ValidationHelper.isValidObjectId(userId)) {
-      return {
-        error: PaymeError.UserNotFound,
-        id: transId,
-      };
-    }
+      if (selectedService) {
+        logger.info(
+          `Selected service in createTransaction: ${selectedService}`,
+        );
+      }
 
-    const plan = await Plan.findById(planId).exec();
-    const user = await UserModel.findById(userId).exec();
+      if (!ValidationHelper.isValidObjectId(planId)) {
+        logger.warn('❌ Invalid planId format in createTransaction', { planId });
+        return {
+          error: PaymeError.ProductNotFound,
+          id: transId,
+        };
+      }
 
-    if (!user) {
-      return {
-        error: PaymeError.UserNotFound,
-        id: transId,
-      };
-    }
+      if (!ValidationHelper.isValidObjectId(userId)) {
+        logger.warn('❌ Invalid userId format in createTransaction', { userId });
+        return {
+          error: PaymeError.UserNotFound,
+          id: transId,
+        };
+      }
 
-    if (!plan) {
-      return {
-        error: PaymeError.ProductNotFound,
-        id: transId,
-      };
-    }
+      logger.info('🔎 Searching for plan and user');
+      const plan = await this.planRepository.findOne({ where: { id: planId } });
+      const user = await this.userRepository.findOne({ where: { id: userId } });
 
-    if (hasActiveSubscription(user)) {
-      return {
-        error: PaymeError.AlreadyDone,
-        id: transId,
-      };
-    }
+      logger.info('📊 Query results', {
+        planFound: !!plan,
+        userFound: !!user,
+      });
 
-    if (createTransactionDto.params.amount / 100 !== plan.price) {
-      console.log(
-        'the amount in sum is: ',
-        createTransactionDto.params.amount / 100,
-      );
-      return {
-        error: PaymeError.InvalidAmount,
-        id: transId,
-      };
-    }
+      if (!user) {
+        return {
+          error: PaymeError.UserNotFound,
+          id: transId,
+        };
+      }
 
-    const existingTransaction = await Transaction.findOne({
-      userId,
-      planId,
-      status: TransactionStatus.PENDING,
-    }).exec();
+      if (!plan) {
+        return {
+          error: PaymeError.ProductNotFound,
+          id: transId,
+        };
+      }
 
-    if (existingTransaction) {
-      // Eski transactionning muddatini tekshirish
-      const isExpired = this.checkTransactionExpiration(existingTransaction.createdAt);
+      if (hasActiveSubscription(user)) {
+        return {
+          error: PaymeError.AlreadyDone,
+          id: transId,
+        };
+      }
 
-      if (isExpired) {
-        // Muddati tugagan transaction - bekor qilish
-        await Transaction.findByIdAndUpdate(existingTransaction._id, {
-          status: TransactionStatus.CANCELED,
-          state: TransactionState.PendingCanceled,
-          cancelTime: new Date(),
-          reason: CancelingReasons.CanceledDueToTimeout,
-        }).exec();
+      if (createTransactionDto.params.amount / 100 !== plan.price) {
+        console.log(
+          'the amount in sum is: ',
+          createTransactionDto.params.amount / 100,
+        );
+        return {
+          error: PaymeError.InvalidAmount,
+          id: transId,
+        };
+      }
 
-        logger.info(`Expired pending transaction ${existingTransaction.transId} cancelled`);
-      } else if (existingTransaction.transId === transId) {
+      const existingTransaction = await this.transactionRepository.findOne({
+        where: {
+          userId,
+          planId,
+          status: TransactionStatus.PENDING,
+        },
+      });
+
+      if (existingTransaction) {
+        // Eski transactionning muddatini tekshirish
+        const isExpired = this.checkTransactionExpiration(existingTransaction.createdAt);
+
+        if (isExpired) {
+          // Muddati tugagan transaction - bekor qilish
+          await this.transactionRepository.update(
+            { id: existingTransaction.id },
+            {
+              status: TransactionStatus.CANCELED,
+              state: TransactionState.PendingCanceled,
+              cancelTime: new Date(),
+              reason: CancelingReasons.CanceledDueToTimeout,
+            },
+          );
+
+          logger.info(`Expired pending transaction ${existingTransaction.transId} cancelled`);
+        } else if (existingTransaction.transId === transId) {
+          return {
+            result: {
+              transaction: existingTransaction.id,
+              state: TransactionState.Pending,
+              create_time: new Date(existingTransaction.createdAt).getTime(),
+            },
+          };
+        } else {
+          return {
+            error: PaymeError.TransactionInProcess,
+            id: transId,
+          };
+        }
+      }
+
+      const transaction = await this.transactionRepository.findOne({
+        where: { transId }
+      });
+
+      if (transaction) {
+        if (this.checkTransactionExpiration(transaction.createdAt)) {
+          await this.transactionRepository.update(
+            { transId },
+            {
+              status: TransactionStatus.CANCELED,
+              cancelTime: new Date(),
+              state: TransactionState.PendingCanceled,
+              reason: CancelingReasons.CanceledDueToTimeout,
+            },
+          );
+
+          return {
+            error: {
+              ...PaymeError.CantDoOperation,
+              state: TransactionState.PendingCanceled,
+              reason: CancelingReasons.CanceledDueToTimeout,
+            },
+            id: transId,
+          };
+        }
+
         return {
           result: {
-            transaction: existingTransaction.id,
+            transaction: transaction.id,
             state: TransactionState.Pending,
-            create_time: new Date(existingTransaction.createdAt).getTime(),
+            create_time: new Date(transaction.createdAt).getTime(),
           },
         };
-      } else {
+      }
+
+      const checkTransaction: CheckPerformTransactionDto = {
+        method: TransactionMethods.CheckPerformTransaction,
+        params: {
+          amount: plan.price,
+          account: {
+            plan_id: planId,
+            user_id: userId,
+          },
+        },
+      };
+
+      const checkResult = await this.checkPerformTransaction(checkTransaction);
+
+      if (checkResult.error) {
         return {
-          error: PaymeError.TransactionInProcess,
+          error: checkResult.error,
           id: transId,
         };
       }
-    }
+      logger.info(`Selected sport before createTransaction: ${selectedService}`);
 
-    const transaction = await Transaction.findOne({ transId }).exec();
+      const newTransaction = this.transactionRepository.create({
+        transId: createTransactionDto.params.id,
+        userId: createTransactionDto.params.account.user_id,
+        paymentType: PaymentType.ONETIME,
+        planId: createTransactionDto.params.account.plan_id,
+        provider: PaymentProvider.PAYME,
+        state: TransactionState.Pending,
+        amount: createTransactionDto.params.amount,
+        selectedService: selectedService,
+      });
 
-    if (transaction) {
-      if (this.checkTransactionExpiration(transaction.createdAt)) {
-        await Transaction.findOneAndUpdate(
-          { transId },
-          {
-            status: 'CANCELED',
-            cancelTime: new Date(),
-            state: TransactionState.PendingCanceled,
-            reason: CancelingReasons.CanceledDueToTimeout,
-          },
-        ).exec();
+      await this.transactionRepository.save(newTransaction);
 
-        return {
-          error: {
-            ...PaymeError.CantDoOperation,
-            state: TransactionState.PendingCanceled,
-            reason: CancelingReasons.CanceledDueToTimeout,
-          },
-          id: transId,
-        };
-      }
+      logger.info('✅ Transaction created successfully', {
+        transactionId: newTransaction.id,
+        transId: newTransaction.transId,
+      });
 
       return {
         result: {
-          transaction: transaction.id,
+          transaction: newTransaction.id,
           state: TransactionState.Pending,
-          create_time: new Date(transaction.createdAt).getTime(),
+          create_time: new Date(newTransaction.createdAt).getTime(),
         },
       };
-    }
-
-    const checkTransaction: CheckPerformTransactionDto = {
-      method: TransactionMethods.CheckPerformTransaction,
-      params: {
-        amount: plan.price,
-        account: {
-          plan_id: planId,
-          user_id: userId,
-        },
-      },
-    };
-
-    const checkResult = await this.checkPerformTransaction(checkTransaction);
-
-    if (checkResult.error) {
+    } catch (error) {
+      logger.error('❌ Error in createTransaction', {
+        error: error.message,
+        stack: error.stack,
+        params: createTransactionDto.params,
+      });
       return {
-        error: checkResult.error,
-        id: transId,
+        error: {
+          code: ErrorStatusCodes.SystemError,
+          message: {
+            uz: 'Tizimda xatolik yuz berdi',
+            en: 'System error occurred',
+            ru: 'Произошла системная ошибка',
+          },
+          data: error.message,
+        },
+        id: createTransactionDto.params?.id,
       };
     }
-    logger.info(`Selected sport before createTransaction: ${selectedService}`);
-
-    const newTransaction = await Transaction.create({
-      transId: createTransactionDto.params.id,
-      userId: createTransactionDto.params.account.user_id,
-      paymentType: PaymentTypes.ONETIME,
-      planId: createTransactionDto.params.account.plan_id,
-      provider: 'payme',
-      state: TransactionState.Pending,
-      amount: createTransactionDto.params.amount,
-      selectedService: selectedService,
-    });
-
-    return {
-      result: {
-        transaction: newTransaction.id,
-        state: TransactionState.Pending,
-        create_time: new Date(newTransaction.createdAt).getTime(),
-      },
-    };
   }
 
   async performTransaction(performTransactionDto: PerformTransactionDto) {
-    const transaction = await Transaction.findOne({
-      transId: performTransactionDto.params.id,
-    }).exec();
+    const transaction = await this.transactionRepository.findOne({
+      where: { transId: performTransactionDto.params.id },
+    });
 
     if (!transaction) {
       return {
@@ -345,7 +449,9 @@ export class PaymeService {
       };
     }
 
-    const user = await UserModel.findById(transaction.userId).exec();
+    const user = await this.userRepository.findOne({
+      where: { id: transaction.userId },
+    });
 
     // Faqat subscription to'lovlari uchun aktiv obuna tekshiruvi
     // Onetime to'lovlar uchun bu tekshiruv o'tkazib yuboriladi
@@ -398,15 +504,15 @@ export class PaymeService {
     );
 
     if (expirationTime) {
-      await Transaction.findOneAndUpdate(
+      await this.transactionRepository.update(
         { transId: performTransactionDto.params.id },
         {
-          status: 'CANCELED',
+          status: TransactionStatus.CANCELED,
           cancelTime: new Date(),
           state: TransactionState.PendingCanceled,
           reason: CancelingReasons.CanceledDueToTimeout,
         },
-      ).exec();
+      );
 
       return {
         error: {
@@ -420,17 +526,22 @@ export class PaymeService {
 
     const performTime = new Date();
 
-    const updatedPayment = await Transaction.findOneAndUpdate(
+    await this.transactionRepository.update(
       { transId: performTransactionDto.params.id },
       {
-        status: 'PAID',
+        status: TransactionStatus.PAID,
         state: TransactionState.Paid,
         performTime,
       },
-      { new: true },
-    ).exec();
+    );
 
-    const plan = await Plan.findById(transaction.planId).exec();
+    const updatedPayment = await this.transactionRepository.findOne({
+      where: { transId: performTransactionDto.params.id },
+    });
+
+    const plan = await this.planRepository.findOne({
+      where: { id: transaction.planId },
+    });
 
     if (!plan) {
       return {
@@ -441,14 +552,17 @@ export class PaymeService {
 
     try {
       if (user) {
-        user.subscriptionType = 'onetime';
-        await user.save();
-
-        await this.botService.handlePaymentSuccess(
-          transaction.userId.toString(),
-          user.telegramId,
-          user.username,
+        await this.userRepository.update(
+          { id: user.id },
+          { subscriptionType: 'onetime' as any },
         );
+
+        // TODO: Implement handlePaymentSuccessForPayme in BotService
+        // await this.botService.handlePaymentSuccessForPayme(
+        //   transaction.userId.toString(),
+        //   user.telegramId,
+        //   user.username,
+        // );
       }
     } catch (error) {
       logger.error('Error handling payment success:', error);
@@ -466,7 +580,9 @@ export class PaymeService {
   async cancelTransaction(cancelTransactionDto: CancelTransactionDto) {
     const transId = cancelTransactionDto.params.id;
 
-    const transaction = await Transaction.findOne({ transId }).exec();
+    const transaction = await this.transactionRepository.findOne({
+      where: { transId },
+    });
 
     if (!transaction) {
       return {
@@ -475,17 +591,20 @@ export class PaymeService {
       };
     }
 
-    if (transaction.status === 'PENDING') {
-      const cancelTransaction = await Transaction.findByIdAndUpdate(
-        transaction.id,
+    if (transaction.status === TransactionStatus.PENDING) {
+      await this.transactionRepository.update(
+        { id: transaction.id },
         {
-          status: 'CANCELED',
+          status: TransactionStatus.CANCELED,
           state: TransactionState.PendingCanceled,
           cancelTime: new Date(),
           reason: cancelTransactionDto.params.reason,
         },
-        { new: true },
-      ).exec();
+      );
+
+      const cancelTransaction = await this.transactionRepository.findOne({
+        where: { id: transaction.id },
+      });
 
       return {
         result: {
@@ -506,16 +625,19 @@ export class PaymeService {
       };
     }
 
-    const updatedTransaction = await Transaction.findByIdAndUpdate(
-      transaction.id,
+    await this.transactionRepository.update(
+      { id: transaction.id },
       {
-        status: 'CANCELED',
+        status: TransactionStatus.CANCELED,
         state: TransactionState.PaidCanceled,
         cancelTime: new Date(),
         reason: cancelTransactionDto.params.reason,
       },
-      { new: true },
-    ).exec();
+    );
+
+    const updatedTransaction = await this.transactionRepository.findOne({
+      where: { id: transaction.id },
+    });
 
     return {
       result: {
@@ -527,9 +649,9 @@ export class PaymeService {
   }
 
   async checkTransaction(checkTransactionDto: CheckTransactionDto) {
-    const transaction = await Transaction.findOne({
-      transId: checkTransactionDto.params.id,
-    }).exec();
+    const transaction = await this.transactionRepository.findOne({
+      where: { transId: checkTransactionDto.params.id },
+    });
 
     if (!transaction) {
       return {
@@ -555,17 +677,23 @@ export class PaymeService {
   }
 
   async getStatement(getStatementDto: GetStatementDto) {
-    const transactions = await Transaction.find({
-      createdAt: {
-        $gte: new Date(getStatementDto.params.from),
-        $lte: new Date(getStatementDto.params.to),
+    const transactions = await this.transactionRepository.find({
+      where: {
+        provider: PaymentProvider.PAYME,
       },
-      provider: 'payme',
-    }).exec();
+    });
+
+    // Filter by date range in application layer (TypeORM date filtering with Between)
+    const filteredTransactions = transactions.filter((transaction) => {
+      const createdAt = new Date(transaction.createdAt);
+      const from = new Date(getStatementDto.params.from);
+      const to = new Date(getStatementDto.params.to);
+      return createdAt >= from && createdAt <= to;
+    });
 
     return {
       result: {
-        transactions: transactions.map((transaction) => {
+        transactions: filteredTransactions.map((transaction) => {
           return {
             id: transaction.transId,
             time: new Date(transaction.createdAt).getTime(),

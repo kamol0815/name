@@ -5,7 +5,9 @@ import { join } from 'node:path';
 import { AppModule } from './app.module';
 import logger from './shared/utils/logger';
 import * as process from 'node:process';
-import { connectDB } from './shared/database/db';
+import { DataSource } from 'typeorm';
+import { PlanEntity } from './shared/database/entities/plan.entity';
+import { seedBasicPlan } from './shared/database/seeders/plan.seeder';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -17,7 +19,10 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  await connectDB();
+  // Get TypeORM DataSource and run seeders
+  const dataSource = app.get(DataSource);
+  const planRepository = dataSource.getRepository(PlanEntity);
+  await seedBasicPlan(planRepository);
 
   app.useStaticAssets(join(process.cwd(), 'public'));
   app.setViewEngine('ejs');

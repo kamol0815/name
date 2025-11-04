@@ -1,16 +1,15 @@
 import { Injectable } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Not } from 'typeorm';
 import axios from 'axios';
-import { Plan } from 'src/shared/database/models/plans.model';
-import { PaymentProvider, PaymentTypes, Transaction, TransactionStatus } from 'src/shared/database/models/transactions.model';
-import { CardType, UserCardsModel } from 'src/shared/database/models/user-cards.model';
-import { UserSubscription } from 'src/shared/database/models/user-subscription.model';
+import { UserEntity, PlanEntity, TransactionEntity, UserCardEntity, UserSubscriptionEntity } from 'src/shared/database/entities';
+import { PaymentProvider, PaymentType, TransactionStatus, CardType, SubscriptionType, SubscriptionStatus } from 'src/shared/database/entities/enums';
 import { clickAuthHash } from 'src/shared/utils/hashing/click-auth-hash';
 import logger from 'src/shared/utils/logger';
 import { PaymentCardTokenDto } from 'src/shared/utils/types/interfaces/payme-types';
 import { CreateCardTokenDto } from './dto/create-card-dto';
 import { VerifyCardTokenDto } from './dto/verif-card-dto';
 import { CreateCardTokenResponseDto } from 'src/shared/utils/types/interfaces/click-types-interface';
-import { UserModel } from 'src/shared/database/models/user.model';
 import { BotService } from 'src/modules/bot/bot.service';
 
 @Injectable()
@@ -18,15 +17,19 @@ export class ClickSubsApiService {
 
     private readonly serviceId = process.env.CLICK_SERVICE_ID;
     private readonly baseUrl = 'https://api.click.uz/v2/merchant';
-    private botService: BotService;
 
-
-    getBotService(): BotService {
-        if (!this.botService) {
-            this.botService = new BotService();
-        }
-        return this.botService;
-    }
+    constructor(
+        @InjectRepository(UserEntity)
+        private readonly userRepository: Repository<UserEntity>,
+        @InjectRepository(PlanEntity)
+        private readonly planRepository: Repository<PlanEntity>,
+        @InjectRepository(TransactionEntity)
+        private readonly transactionRepository: Repository<TransactionEntity>,
+        @InjectRepository(UserCardEntity)
+        private readonly userCardRepository: Repository<UserCardEntity>,
+        @InjectRepository(UserSubscriptionEntity)
+        private readonly userSubscriptionRepository: Repository<UserSubscriptionEntity>,
+    ) { }
 
 
     async createCardtoken(requestBody: CreateCardTokenDto) {
@@ -118,8 +121,8 @@ export class ClickSubsApiService {
                 throw new Error(`Verification failed: ${response.data.error_message || 'Unknown error'}`);
             }
 
-            const user = await UserModel.findOne({
-                _id: requestBody.userId,
+            const user = await this.userRepository.findOne({
+                where: { id: requestBody.userId },
             });
 
 
@@ -130,8 +133,8 @@ export class ClickSubsApiService {
             logger.info(`User found: ${user}`);
 
 
-            const plan = await Plan.findOne({
-                _id: requestBody.planId
+            const plan = await this.planRepository.findOne({
+                where: { id: requestBody.planId }
             });
             if (!plan) {
                 logger.error(`Plan not found for ID: ${requestBody.planId}`);
@@ -145,24 +148,29 @@ export class ClickSubsApiService {
             logger.info(`Creating user card for user ID: ${requestBody.userId}, with card token: ${requestBody.card_token}`);
 
             // Check if user already has a card and update it, otherwise create new one
-            const existingCard = await UserCardsModel.findOne({ telegramId: user.telegramId, cardType: CardType.CLICK });
+            const existingCard = await this.userCardRepository.findOne({
+                where: {
+                    telegramId: user.telegramId,
+                    cardType: CardType.CLICK
+                }
+            });
 
             let userCard;
             if (existingCard) {
                 existingCard.incompleteCardNumber = response.data.card_number;
                 existingCard.cardToken = requestBodyWithServiceId.card_token;
                 existingCard.expireDate = requestBody.expireDate;
-                existingCard.planId = requestBody.planId as any;
+                existingCard.planId = requestBody.planId;
                 existingCard.verificationCode = requestBody.sms_code;
                 existingCard.verified = true;
                 existingCard.verifiedDate = new Date(time);
                 existingCard.isDeleted = false;
-                existingCard.deletedAt = undefined;
-                userCard = await existingCard.save();
+                existingCard.deletedAt = null;
+                userCard = await this.userCardRepository.save(existingCard);
             } else {
                 // Create new card
-                userCard = await UserCardsModel.create({
-                    telegramId: user.telegramId,
+                const newCard = this.userCardRepository.create({
+                    telegramId: Number(user.telegramId),
                     username: user.username ? user.username : undefined,
                     incompleteCardNumber: response.data.card_number,
                     cardToken: requestBodyWithServiceId.card_token,
@@ -174,9 +182,12 @@ export class ClickSubsApiService {
                     verifiedDate: new Date(time),
                     cardType: CardType.CLICK
                 });
+                userCard = await this.userCardRepository.save(newCard);
             }
-            user.subscriptionType = 'subscription';
-            await user.save();
+
+            // No need to update subscriptionType here
+            // user.subscriptionType = 'basic';
+            // await this.userRepository.save(user);
 
             const hasUsedTrial = Boolean(user.hasReceivedFreeBonus);
             const duration = Number(plan.duration) || 30;
@@ -194,26 +205,23 @@ export class ClickSubsApiService {
                 const endDate = new Date(now);
                 endDate.setDate(endDate.getDate() + duration);
 
-                await UserSubscription.create({
-                    user: requestBody.userId,
-                    plan: requestBody.planId,
-                    subscriptionType: 'subscription',
+                const newSubscription = this.userSubscriptionRepository.create({
+                    userId: requestBody.userId,
+                    planId: requestBody.planId,
+                    subscriptionType: SubscriptionType.SUBSCRIPTION,
                     startDate: now,
                     endDate,
                     isActive: true,
                     autoRenew: true,
-                    status: 'active',
+                    status: SubscriptionStatus.ACTIVE,
                     paidAmount: 0,
                     isTrial: true,
                 });
+                await this.userSubscriptionRepository.save(newSubscription);
 
                 if (requestBody.selectedService === 'yulduz') {
-                    await this.getBotService().handleAutoSubscriptionSuccess(
-                        requestBody.userId,
-                        user.telegramId,
-                        requestBody.planId,
-                        user.username
-                    );
+                    // TODO: Handle bot notification
+                    logger.info('Trial subscription activated for user', { userId: requestBody.userId });
                 }
 
                 return responsePayload;
@@ -221,14 +229,8 @@ export class ClickSubsApiService {
 
             if (requestBody.selectedService === 'yulduz') {
                 try {
-                    await this.getBotService().handleCardAddedWithoutBonus(
-                        requestBody.userId,
-                        user.telegramId,
-                        CardType.CLICK,
-                        plan,
-                        user.username,
-                        requestBody.selectedService
-                    );
+                    // TODO: Handle bot notification for card added without bonus
+                    logger.info('Card added without bonus for user', { userId: requestBody.userId });
                 } catch (botError) {
                     logger.error(
                         `Failed to trigger paid renewal for CLICK user ${user.telegramId}:`,
@@ -253,12 +255,14 @@ export class ClickSubsApiService {
 
 
     async paymentWithToken(requestBody: PaymentCardTokenDto) {
-        const userCard = await UserCardsModel.findOne({
-            userId: requestBody.userId,
-            telegramId: requestBody.telegramId,
-            verified: true,
-            cardType: CardType.CLICK,
-            isDeleted: { $ne: true },
+        const userCard = await this.userCardRepository.findOne({
+            where: {
+                userId: requestBody.userId,
+                telegramId: requestBody.telegramId,
+                verified: true,
+                cardType: CardType.CLICK,
+                isDeleted: Not(true),
+            }
         });
 
         if (!userCard || !this.serviceId) {
@@ -272,7 +276,7 @@ export class ClickSubsApiService {
             }
         }
 
-        const plan = await Plan.findById(requestBody.planId);
+        const plan = await this.planRepository.findOne({ where: { id: requestBody.planId } });
         if (!plan) {
             logger.error('Plan not found');
             return {
@@ -313,17 +317,15 @@ export class ClickSubsApiService {
             const customRandomId = `subscription-click-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 
 
-            const transaction = await Transaction.create(
-                {
-                    provider: PaymentProvider.CLICK,
-                    paymentType: PaymentTypes.SUBSCRIPTION,
-                    transId: paymentId ? paymentId : customRandomId,
-                    amount: '5555',
-                    status: TransactionStatus.PAID,
-                    userId: requestBody.userId,
-                    planId: requestBody.planId,
-                }
-            )
+            const transaction = this.transactionRepository.create({
+                provider: PaymentProvider.CLICK,
+                transId: paymentId ? paymentId : customRandomId,
+                amount: 5555,
+                status: TransactionStatus.PAID,
+                userId: requestBody.userId,
+                planId: requestBody.planId,
+            });
+            await this.transactionRepository.save(transaction);
 
             logger.info(`Transaction created in click-subs-api: ${JSON.stringify(transaction)}`);
 
@@ -331,22 +333,18 @@ export class ClickSubsApiService {
             const endDate = new Date();
             endDate.setDate(endDate.getDate() + 30);
 
-            await UserSubscription.create({
-                user: requestBody.userId,
-                plan: requestBody.planId,
-                telegramId: requestBody.telegramId,
-                planName: plan.name,
-                subscriptionType: 'subscription',
+            const newSubscription = this.userSubscriptionRepository.create({
+                userId: requestBody.userId,
+                planId: requestBody.planId,
+                subscriptionType: SubscriptionType.SUBSCRIPTION,
                 startDate: new Date(),
                 endDate: endDate,
                 isActive: true,
                 autoRenew: true,
-                status: 'active',
-                paidBy: CardType.CLICK,
-                subscribedBy: CardType.CLICK,
-                hasReceivedFreeBonus: true,
-                paidAmount: plan.price // Add the missing paidAmount field
+                status: SubscriptionStatus.ACTIVE,
+                paidAmount: plan.price,
             });
+            await this.userSubscriptionRepository.save(newSubscription);
 
             logger.info(`UserSubscription created for user ID: ${requestBody.userId}, telegram ID: ${requestBody.telegramId}, plan ID: ${requestBody.planId} in click-subs-api`);
 

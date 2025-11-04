@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { BotModule } from './modules/bot/bot.module';
@@ -13,6 +14,7 @@ import { PaymeSubsApiModule } from './modules/payment-providers/payme-subs-api/p
 import { PaymentLinkModule } from './modules/payment-link/payment-link.module';
 import { SubscriptionManagementModule } from './modules/subscription-management/subscription-management.module';
 import { LinksModule } from './modules/links/links.module';
+import { dataSourceOptions } from './shared/database/typeorm.config';
 
 @Module({
   imports: [
@@ -20,6 +22,7 @@ import { LinksModule } from './modules/links/links.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    TypeOrmModule.forRoot(dataSourceOptions),
     BotModule,
     ClickModule,
     PaymeModule,

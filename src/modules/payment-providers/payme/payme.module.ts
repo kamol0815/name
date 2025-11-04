@@ -1,11 +1,16 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { PaymeService } from './payme.service';
 import { PaymeController } from './payme.controller';
 import { BotModule } from '../../bot/bot.module';
+import { UserEntity, PlanEntity, TransactionEntity } from '../../../shared/database/entities';
 
 @Module({
+  imports: [
+    BotModule,
+    TypeOrmModule.forFeature([UserEntity, PlanEntity, TransactionEntity]),
+  ],
   controllers: [PaymeController],
   providers: [PaymeService],
-  imports: [BotModule],
 })
-export class PaymeModule {}
+export class PaymeModule { }
