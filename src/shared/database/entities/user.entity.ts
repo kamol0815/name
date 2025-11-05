@@ -6,10 +6,11 @@ import {
     UpdateDateColumn,
     Index,
     OneToMany,
-    ManyToMany,
-    JoinTable,
+    OneToOne,
 } from 'typeorm';
 import { SubscriptionType } from './enums';
+import { UserFavoriteNameEntity } from './user-favorite-name.entity';
+import { UserPersonaProfileEntity } from './user-persona-profile.entity';
 
 @Entity('users')
 @Index(['telegramId', 'isActive'])
@@ -61,6 +62,20 @@ export class UserEntity {
 
     @Column({ type: 'varchar', nullable: true })
     activeInviteLink?: string;
+
+    @OneToMany(
+        () => UserFavoriteNameEntity,
+        (favorite) => favorite.user,
+        { cascade: ['remove'] },
+    )
+    favorites?: UserFavoriteNameEntity[];
+
+    @OneToOne(
+        () => UserPersonaProfileEntity,
+        (persona) => persona.user,
+        { cascade: ['remove'] },
+    )
+    personaProfile?: UserPersonaProfileEntity;
 
     @CreateDateColumn()
     createdAt: Date;

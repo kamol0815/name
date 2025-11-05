@@ -219,7 +219,7 @@ export class ClickSubsApiService {
                 });
                 await this.userSubscriptionRepository.save(newSubscription);
 
-                if (requestBody.selectedService === 'yulduz') {
+                if (requestBody.selectedService === 'basic') {
                     // TODO: Handle bot notification
                     logger.info('Trial subscription activated for user', { userId: requestBody.userId });
                 }
@@ -227,7 +227,7 @@ export class ClickSubsApiService {
                 return responsePayload;
             }
 
-            if (requestBody.selectedService === 'yulduz') {
+            if (requestBody.selectedService === 'basic') {
                 try {
                     // TODO: Handle bot notification for card added without bonus
                     logger.info('Card added without bonus for user', { userId: requestBody.userId });

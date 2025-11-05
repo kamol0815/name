@@ -15,7 +15,7 @@ export function generateClickOnetimeLink(
 ): string {
     const CLICK_SERVICE_ID = process.env.CLICK_SERVICE_ID || '76216';
     const CLICK_MERCHANT_ID = process.env.CLICK_MERCHANT_ID || '7269';
-    const RETURN_URL = 'https://t.me/Yulduz_bashorati_bot';
+    const RETURN_URL = 'https://t.me/gbclilBot';
 
     // Click to'lov linki
     const paymentUrl = new URL('https://my.click.uz/services/pay');

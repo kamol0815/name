@@ -300,7 +300,7 @@ export class PaymeSubsApiService {
                     });
                     await this.userSubscriptionRepository.save(newSubscription);
 
-                    if (requestBody.selectedService === 'yulduz') {
+                    if (requestBody.selectedService === 'basic') {
                         // TODO: Handle bot notification
                         logger.info('Trial subscription activated for PAYME user', { userId: requestBody.userId });
                     }
@@ -308,7 +308,7 @@ export class PaymeSubsApiService {
                     return responsePayload;
                 }
 
-                if (requestBody.selectedService === 'yulduz') {
+                if (requestBody.selectedService === 'basic') {
                     try {
                         // TODO: Handle bot notification for card added without bonus
                         logger.info('Card added without bonus for PAYME user', { userId: requestBody.userId });

@@ -8,7 +8,7 @@ export type ClickRedirectParams = {
   userId: string;
 };
 const CLICK_URL = `https://my.click.uz`;
-const BOT_URL = 'https://t.me/Yulduz_bashorati_bot';
+const BOT_URL = 'https://t.me/gbclilBot';
 
 function buildMerchantTransactionId(params: ClickRedirectParams): string {
   return `${params.userId}.${params.planId}`;

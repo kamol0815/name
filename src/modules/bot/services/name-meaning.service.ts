@@ -39,6 +39,6 @@ export class NameMeaningService {
     }
 
     formatNameMeaning(name: string, meaning: string): string {
-        return `🌟 <b>${name}</b> ismining manosi:\n\n${meaning}\n\n💫 Munajjim Premium - Ismlar manosi`;
+        return `🌟 <b>${name}</b> ismining ma'nosi:\n\n${meaning}\n\nIsmlar manosi botidan foydalanishda davom eting.`;
     }
 }
