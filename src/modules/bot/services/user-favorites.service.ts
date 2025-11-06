@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserFavoriteNameEntity } from '../../../shared/database/entities/user-favorite-name.entity';
@@ -23,8 +23,9 @@ export class UserFavoritesService {
   constructor(
     @InjectRepository(UserFavoriteNameEntity)
     private readonly favoritesRepository: Repository<UserFavoriteNameEntity>,
+    @Inject(forwardRef(() => NameInsightsService))
     private readonly insightsService: NameInsightsService,
-  ) {}
+  ) { }
 
   async toggleFavorite(userId: string, slug: string): Promise<'added' | 'removed'> {
     const record = this.insightsService.findRecordByName(slug);

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { InlineKeyboard } from 'grammy';
 import { InlineQueryResultArticle } from 'grammy/types';
@@ -42,7 +42,9 @@ export class BotService {
     @InjectRepository(PlanEntity)
     private readonly planRepository: Repository<PlanEntity>,
     private readonly nameMeaningService: NameMeaningService,
+    @Inject(forwardRef(() => NameInsightsService))
     private readonly insightsService: NameInsightsService,
+    @Inject(forwardRef(() => UserFavoritesService))
     private readonly favoritesService: UserFavoritesService,
     private readonly personaService: UserPersonaService,
   ) {
@@ -83,8 +85,8 @@ export class BotService {
 
     await ctx.reply(
       '📊 Bot statistikasi:\n\n' +
-        `👥 Jami foydalanuvchilar: ${totalUsers}\n` +
-        `✅ Faol foydalanuvchilar: ${activeUsers}`,
+      `👥 Jami foydalanuvchilar: ${totalUsers}\n` +
+      `✅ Faol foydalanuvchilar: ${activeUsers}`,
     );
   }
 
@@ -556,9 +558,9 @@ export class BotService {
 
     await ctx.reply(
       "🔒 Ushbu bo'limdan foydalanish uchun premium talab qilinadi.\n\n" +
-        "💵 Narx: 5 555 so'm\n" +
-        '♾️ Umrbod kirish.\n\n' +
-        "To'lovni amalga oshirib, barcha imkoniyatlarni oching.",
+      "💵 Narx: 5 555 so'm\n" +
+      '♾️ Umrbod kirish.\n\n' +
+      "To'lovni amalga oshirib, barcha imkoniyatlarni oching.",
       { reply_markup: keyboard },
     );
     return false;

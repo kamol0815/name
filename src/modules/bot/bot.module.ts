@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { BotService } from './bot.service';
 import {
@@ -32,4 +32,4 @@ import { UserPersonaService } from './services/user-persona.service';
   ],
   exports: [BotService],
 })
-export class BotModule {}
+export class BotModule { }
