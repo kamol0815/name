@@ -25,12 +25,20 @@ export function buildPaymeProviderUrl(
     amountInTiyns,
     planId: params.planId,
     userId: params.userId,
+    merchantId, // Debug uchun qo'shamiz
   });
+
+  if (!merchantId) {
+    logger.error('❌ PAYME_MERCHANT_ID is not configured!');
+    throw new Error('PAYME_MERCHANT_ID is not configured');
+  }
 
   const paramsInString = `m=${merchantId};ac.plan_id=${params.planId};ac.user_id=${params.userId};ac.selected_service=${params.planId};a=${amountInTiyns};c=${encodeURIComponent(returnUrl)}`;
   logger.info('📋 Payme params string:', paramsInString);
   const encodedParams = base64Encode(paramsInString);
-  return `${PAYME_CHECKOUT_URL}/${encodedParams}`;
+  const finalUrl = `${PAYME_CHECKOUT_URL}/${encodedParams}`;
+  logger.info('🔗 Final Payme URL:', finalUrl);
+  return finalUrl;
 }
 
 export function generatePaymeLink(params: PaymeLinkGeneratorParams): string {

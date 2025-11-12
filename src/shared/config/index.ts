@@ -32,9 +32,4 @@ export const config = cleanEnv(process.env, {
   SUBSCRIPTION_MANAGEMENT_BASE_URL: str({ default: '' }),
   SUBSCRIPTION_TERMS_URL: str({ default: 'https://surl.li/takrle' }),
   API_PREFIX: str({ default: 'api' }),
-
-  UZCARD_BASE_URL: str(),
-  UZCARD_AUTH: str(),
-  UZCARD_LOGIN: str(),
-  UZCARD_PASSWORD: str(),
 });
