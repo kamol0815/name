@@ -10,7 +10,7 @@ export const config = cleanEnv(process.env, {
   BASE_URL: str({ default: 'http://localhost:3000' }),
   BOT_TOKEN: str(),
   POSTGRES_URI: str(),
-  CHANNEL_ID: str(),
+  CHANNEL_ID: str({ default: '' }),
   NODE_ENV: str({
     choices: ['development', 'production'],
     default: 'development',
